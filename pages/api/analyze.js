@@ -178,12 +178,13 @@ function checkRateLimit(ip) {
 }
 
 // ---------- Handler ----------
-// Vercel Hobby cap: 60s. We bail at 55s with a clean error.
-export const maxDuration = 60;
+// On Render (long-running server) there is no platform timeout — we just guard
+// against runaway upstream calls. On Vercel the maxDuration export caps at 60s.
+export const maxDuration = 300;
 export const config = {
-  maxDuration: 60,
+  maxDuration: 300,
 };
-const FETCH_TIMEOUT_MS = 55000;
+const FETCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -295,8 +296,8 @@ export default async function handler(req, res) {
     clearTimeout(timer);
     if (e.name === "AbortError") {
       const msg = lang === "en"
-        ? "Request timed out (>55s). Tip: try a more specific company name, switch to Claude Haiku in Settings, or retry."
-        : "リクエストがタイムアウトしました（55秒超）。対処：より具体的な企業名で試す／設定からClaude Haikuに切替／時間をおいて再試行してください。";
+        ? "Request timed out (>5min). The upstream call took unusually long. Try retrying, or switch to Claude Haiku in Settings."
+        : "リクエストがタイムアウトしました（5分超）。Anthropic API側で異常に時間がかかっています。再試行するか、設定からClaude Haikuに切り替えてみてください。";
       return res.status(504).json({ error: msg });
     }
     return res.status(500).json({ error: lang === "en" ? `Server error: ${e.message}` : `サーバーエラー: ${e.message}` });
