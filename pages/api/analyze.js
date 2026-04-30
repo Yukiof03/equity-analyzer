@@ -178,9 +178,12 @@ function checkRateLimit(ip) {
 }
 
 // ---------- Handler ----------
+// Vercel Hobby cap: 60s. We bail at 55s with a clean error.
+export const maxDuration = 60;
 export const config = {
   maxDuration: 60,
 };
+const FETCH_TIMEOUT_MS = 55000;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -235,7 +238,7 @@ export default async function handler(req, res) {
     system = lang === "en" ? SYSTEM_PROMPT_ANALYZE_EN : SYSTEM_PROMPT_ANALYZE_JA;
     user = buildUserPromptAnalyze(query, lang);
     useWebSearch = true;
-    maxTokens = 4000;
+    maxTokens = 3000;
   } else if (mode === "detail" || mode === "competitor" || mode === "scenario") {
     if (!context || typeof context !== "object") {
       return res.status(400).json({ error: lang === "en" ? "Missing context." : "context が不足しています。" });
@@ -258,6 +261,9 @@ export default async function handler(req, res) {
     body.tools = [{ type: "web_search_20250305", name: "web_search" }];
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
   try {
     const upstream = await fetch(ANTHROPIC_URL, {
       method: "POST",
@@ -267,7 +273,10 @@ export default async function handler(req, res) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+
+    clearTimeout(timer);
 
     const data = await upstream.json().catch(() => ({}));
 
@@ -283,6 +292,13 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ text, model: chosenModel });
   } catch (e) {
-    return res.status(500).json({ error: `サーバーエラー: ${e.message}` });
+    clearTimeout(timer);
+    if (e.name === "AbortError") {
+      const msg = lang === "en"
+        ? "Request timed out (>55s). Tip: try a more specific company name, switch to Claude Haiku in Settings, or retry."
+        : "リクエストがタイムアウトしました（55秒超）。対処：より具体的な企業名で試す／設定からClaude Haikuに切替／時間をおいて再試行してください。";
+      return res.status(504).json({ error: msg });
+    }
+    return res.status(500).json({ error: lang === "en" ? `Server error: ${e.message}` : `サーバーエラー: ${e.message}` });
   }
 }
