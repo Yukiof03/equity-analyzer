@@ -10,137 +10,84 @@ const ALLOWED_MODELS_DEFAULT = [
   "claude-haiku-4-5-20251001",
 ];
 
-const SYSTEM_PROMPT_ANALYZE_JA = `あなたは株式アナリスト・アシスタントです。ユーザーが指定した上場企業について、以下5項目をWeb検索で収集し、必ず指定のJSONフォーマットで返してください。
+const SYSTEM_PROMPT_ANALYZE_JA = `株式アナリストとして、指定企業をWeb検索で調査し、応答末尾に必ず下記JSONを1ブロックだけ出力。
 
-【収集項目】
-1. 過去3年の財務推移（売上高・営業利益・純利益、それぞれ億円単位、米国株は$M単位でも可）と売上のYoY成長率(%)
-2. 直近年度のセグメント別売上構成比(%)とYoY成長率(%)（事業セグメント、または地域・疾患領域などの主要区分。合計100%に正規化）
-3. その企業が属する業界の市場成長率（CAGR、年率%）と出典名
-4. 来期売上アナリストコンセンサス成長率(%)
-5. 来期会社公式ガイダンス成長率(%)
+収集: ①過去3年の売上/営業利益/純利益（億円or$M）と売上YoY% ②直近年度セグメント別売上構成比%とYoY%（合計100%に正規化）③業界CAGR%と出典 ④来期アナリストコンセンサス成長% ⑤来期会社ガイダンス成長%
+sotp_growth = Σ(share×growth)/100 を計算。テキスト値は日本語、数値は数値型、不明はnull、全フィールド必須。
 
-【SOTP計算】
-sotp_growth = Σ(segments[i].share × segments[i].growth) / 100  をあなた自身が計算して入れてください。
+REPORT_DATA: {"company":"","code":"","industry":"","currency":"億円|$M","fiscal_year":"FY2024","generated":"YYYY/M/D","financials":[{"year":"FY2022","revenue":0,"op_profit":0,"net_profit":0,"rev_growth":null},{"year":"FY2023","revenue":0,"op_profit":0,"net_profit":0,"rev_growth":0},{"year":"FY2024","revenue":0,"op_profit":0,"net_profit":0,"rev_growth":0}],"segments":[{"name":"","share":0,"growth":0}],"benchmarks":{"industry_growth":0,"industry_source":"","analyst_consensus":0,"company_guidance":0},"sotp_growth":0,"notes":""}`;
 
-【出力言語】
-JSON内のテキスト（company, industry, segment name, notes 等）は **日本語** で記載してください。
+const SYSTEM_PROMPT_ANALYZE_EN = `As an equity research assistant, research the company via web search and output exactly one JSON block at the end of your reply.
 
-【出力フォーマット】
-返答の最後に、必ず以下の形式で出力してください。説明文は前半に書いてもよいですが、JSONブロックは最後に1つだけ、改行を含めて以下の形で出力してください：
+Collect: ①Past 3yr revenue/op_profit/net_profit ($M or 億円) and revenue YoY% ②Latest FY segment revenue mix% and YoY% (normalize to 100%) ③Industry CAGR% with source ④Next-FY analyst consensus growth% ⑤Next-FY company guidance growth%
+sotp_growth = Σ(share×growth)/100. Text fields in English, numbers as numeric type, null when unknown, all fields required.
 
-REPORT_DATA: {
-  "company": "企業名",
-  "code": "証券コード",
-  "industry": "業界名",
-  "currency": "億円" or "$M",
-  "fiscal_year": "FY2024",
-  "generated": "2026/4/30",
-  "financials": [
-    {"year": "FY2022", "revenue": 12345, "op_profit": 1234, "net_profit": 800, "rev_growth": null},
-    {"year": "FY2023", "revenue": 13000, "op_profit": 1300, "net_profit": 850, "rev_growth": 5.3},
-    {"year": "FY2024", "revenue": 14000, "op_profit": 1400, "net_profit": 900, "rev_growth": 7.7}
-  ],
-  "segments": [
-    {"name": "セグメントA", "share": 60, "growth": 8},
-    {"name": "セグメントB", "share": 40, "growth": 15}
-  ],
-  "benchmarks": {
-    "industry_growth": 6.5,
-    "industry_source": "Grand View Research",
-    "analyst_consensus": 7.0,
-    "company_guidance": 6.0
-  },
-  "sotp_growth": 10.8,
-  "notes": "特記事項・注意点があれば記載"
-}
+REPORT_DATA: {"company":"","code":"","industry":"","currency":"$M|億円","fiscal_year":"FY2024","generated":"YYYY/M/D","financials":[{"year":"FY2022","revenue":0,"op_profit":0,"net_profit":0,"rev_growth":null},{"year":"FY2023","revenue":0,"op_profit":0,"net_profit":0,"rev_growth":0},{"year":"FY2024","revenue":0,"op_profit":0,"net_profit":0,"rev_growth":0}],"segments":[{"name":"","share":0,"growth":0}],"benchmarks":{"industry_growth":0,"industry_source":"","analyst_consensus":0,"company_guidance":0},"sotp_growth":0,"notes":""}`;
 
-数値は数値型で、不明な場合のみ null を入れてください。すべてのフィールドは必須です。`;
-
-const SYSTEM_PROMPT_ANALYZE_EN = `You are an equity research assistant. For the listed company specified by the user, gather the following 5 items via web search and return them in the exact JSON format specified.
-
-[Items to collect]
-1. Past 3 years of financials (revenue, operating profit, net profit; use $M for US stocks, 億円 for Japanese stocks if natural) and YoY revenue growth (%)
-2. Latest fiscal year segment revenue mix (%) and YoY growth (%) (business segments, or geography / therapeutic areas — normalize to 100%)
-3. Industry market growth rate (CAGR, annual %) and source name
-4. Next fiscal year analyst consensus revenue growth (%)
-5. Next fiscal year official company guidance growth (%)
-
-[SOTP calculation]
-sotp_growth = Σ(segments[i].share × segments[i].growth) / 100 — calculate this yourself and include it.
-
-[Output language]
-All text fields in the JSON (company, industry, segment name, notes, etc.) must be in **English**.
-
-[Output format]
-At the end of your response, output the JSON in exactly this form. You may write explanatory text first, but include exactly one JSON block at the end with newlines:
-
-REPORT_DATA: {
-  "company": "Company Name",
-  "code": "Ticker",
-  "industry": "Industry name",
-  "currency": "$M" or "億円",
-  "fiscal_year": "FY2024",
-  "generated": "2026/4/30",
-  "financials": [
-    {"year": "FY2022", "revenue": 12345, "op_profit": 1234, "net_profit": 800, "rev_growth": null},
-    {"year": "FY2023", "revenue": 13000, "op_profit": 1300, "net_profit": 850, "rev_growth": 5.3},
-    {"year": "FY2024", "revenue": 14000, "op_profit": 1400, "net_profit": 900, "rev_growth": 7.7}
-  ],
-  "segments": [
-    {"name": "Segment A", "share": 60, "growth": 8},
-    {"name": "Segment B", "share": 40, "growth": 15}
-  ],
-  "benchmarks": {
-    "industry_growth": 6.5,
-    "industry_source": "Grand View Research",
-    "analyst_consensus": 7.0,
-    "company_guidance": 6.0
-  },
-  "sotp_growth": 10.8,
-  "notes": "Any caveats or supplementary notes"
-}
-
-Numeric fields must be numbers (use null only when unknown). All fields are required.`;
-
-const SYSTEM_PROMPT_DRILLDOWN_JA = "あなたは経験豊富な株式アナリストです。マークダウンで日本語で、簡潔かつ具体的に書いてください。";
-const SYSTEM_PROMPT_DRILLDOWN_EN = "You are an experienced equity analyst. Write in English, in concise and specific markdown.";
+const SYSTEM_PROMPT_DRILLDOWN_JA = "経験豊富な株式アナリスト。簡潔・具体的な日本語マークダウンで回答。";
+const SYSTEM_PROMPT_DRILLDOWN_EN = "Experienced equity analyst. Reply in concise, specific English markdown.";
 
 function buildUserPromptAnalyze(query, lang) {
   if (lang === "en") {
-    return `Research the company below across the 5 items above via web search, calculate the SOTP weighted average growth, and return REPORT_DATA in the specified format.
-
-Company: ${query}
-
-Reference the latest earnings materials, IR information, and market research reports. For US stocks prefer 10-K / 10-Q / Investor Presentation; for Japanese stocks prefer the latest 決算説明資料 / 有価証券報告書.`;
+    return `Company: ${query}\nResearch via web search (prefer 10-K/10-Q/Investor Presentation for US, 決算説明資料/有価証券報告書 for JP) and return REPORT_DATA.`;
   }
-  return `次の企業について、上記の5項目をWeb検索で調査し、SOTP加重平均成長率を計算してREPORT_DATA形式で返してください。
+  return `企業：${query}\nWeb検索で調査し（米国株は10-K/10-Q/Investor Presentation、日本株は決算説明資料/有価証券報告書を優先）、REPORT_DATAを返す。`;
+}
 
-企業：${query}
-
-最新の決算資料・IR情報・市場調査レポートを参照してください。日本株なら日本語のIR資料を、米国株なら10-K/10-QまたはInvestor Presentationを優先してください。`;
+// Build a mode-specific compact context — strips fields the drilldown does not
+// need and removes pretty-print whitespace. Cuts ~50–70% of context tokens.
+function compactContext(ctx, mode) {
+  if (!ctx || typeof ctx !== "object") return "{}";
+  const out = {
+    company: ctx.company,
+    code: ctx.code,
+    industry: ctx.industry,
+    sotp_growth: ctx.sotp_growth,
+  };
+  if (mode === "detail") {
+    out.financials = (ctx.financials || []).map((f) => ({
+      year: f.year, revenue: f.revenue, op_profit: f.op_profit,
+      net_profit: f.net_profit, rev_growth: f.rev_growth,
+    }));
+    out.segments = (ctx.segments || []).map((s) => ({
+      name: s.name, share: s.share, growth: s.growth,
+    }));
+    out.benchmarks = ctx.benchmarks;
+    if (ctx.notes) out.notes = String(ctx.notes).slice(0, 200);
+  } else if (mode === "competitor") {
+    // Competitor pulls fresh data from the web — only need identity + segment shape
+    const last = (ctx.financials || []).slice(-1)[0];
+    if (last) out.latest = { year: last.year, revenue: last.revenue, rev_growth: last.rev_growth };
+    out.segments = (ctx.segments || []).map((s) => ({ name: s.name, share: s.share }));
+  } else if (mode === "scenario") {
+    out.financials = (ctx.financials || []).map((f) => ({ year: f.year, rev_growth: f.rev_growth }));
+    out.segments = (ctx.segments || []).map((s) => ({
+      name: s.name, share: s.share, growth: s.growth,
+    }));
+    out.benchmarks = ctx.benchmarks;
+  }
+  return JSON.stringify(out); // compact, no indent
 }
 
 function buildUserPromptDrilldown(mode, context, lang) {
-  const ctx = `\n\n${lang === "en" ? "[Reference data]" : "【参考データ】"}\n${JSON.stringify(context, null, 2)}`;
+  const ctxStr = compactContext(context, mode);
+  const ctx = `\n${lang === "en" ? "[data]" : "【データ】"}${ctxStr}`;
   if (mode === "detail") {
     return (lang === "en"
-      ? "Based on the company data below, write a detailed evaluation in 3-5 paragraphs for investors. Discuss growth drivers, risks, the meaning of the SOTP-vs-market divergence, and segments to watch."
-      : "以下の企業データに基づき、投資家向けに3〜5パラグラフで詳細評価コメントを書いてください。" +
-        "成長ドライバー、リスク、SOTPと市場予測の乖離の意味、注目すべきセグメントを論じてください."
+      ? "Write a 3-5 paragraph investor evaluation. Cover growth drivers, risks, the meaning of SOTP-vs-market divergence, and segments to watch."
+      : "投資家向けに3〜5段落で詳細評価。成長ドライバー、リスク、SOTPと市場予測の乖離の意味、注目セグメントを論じる。"
     ) + ctx;
   }
   if (mode === "competitor") {
     return (lang === "en"
-      ? "Identify 2-3 major competitors of the company below via web search, build a concise markdown comparison table of recent revenue growth (YoY %) and key segments for each, and end with a brief commentary."
-      : "以下の企業の主要な競合他社2〜3社をWeb検索で特定し、それぞれの直近売上成長率（YoY %）と" +
-        "注目セグメントの簡潔な比較表（マークダウン）を作成し、最後にコメントを付けてください。"
+      ? "Web-search 2-3 major competitors. Build a concise markdown table of recent revenue YoY% and key segments, end with brief commentary."
+      : "主要競合2〜3社をWeb検索で特定。直近売上YoY%と注目セグメントの簡潔なマークダウン表を作り、最後に短評を添える。"
     ) + ctx;
   }
   if (mode === "scenario") {
     return (lang === "en"
-      ? "For the company below, build three medium-term scenarios for the next 3-5 years: bull / base / bear. For each, list as bullets: revenue growth range, expected business environment, key assumptions, and risks to watch."
-      : "以下の企業について、今後3〜5年の中期シナリオを「強気・中立・弱気」の3つで作成してください。" +
-        "各シナリオで売上成長率レンジ・想定される事業環境・主要前提・注目すべきリスクを箇条書きで示してください。"
+      ? "Build 3 medium-term (3-5yr) scenarios: bull / base / bear. For each, bullet: revenue growth range, business environment, key assumptions, risks."
+      : "今後3〜5年の中期シナリオ「強気・中立・弱気」を作成。各シナリオで売上成長率レンジ・事業環境・主要前提・リスクを箇条書きで示す。"
     ) + ctx;
   }
   return "";
