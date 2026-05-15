@@ -732,12 +732,32 @@
     if (!lastReport) return;
     const out = $("#drill-output");
     out.classList.add("visible");
-    out.innerHTML = `<h4>${labelForDrill(kind)}</h4><div class="muted">${t("drill_loading")}</div>`;
+
+    // Find or create the per-kind block. Re-running the same drilldown updates
+    // that block in place; running a different one appends a new block below,
+    // so multiple drilldowns (詳細評価 → 競合比較 → シナリオ) stack vertically.
+    let block = out.querySelector(`.drill-block[data-kind="${kind}"]`);
+    const isNew = !block;
+    if (isNew) {
+      block = document.createElement("div");
+      block.className = "drill-block";
+      block.dataset.kind = kind;
+      if (out.children.length > 0) {
+        block.style.marginTop = "16px";
+        block.style.paddingTop = "16px";
+        block.style.borderTop = "1px solid var(--border)";
+      }
+      out.appendChild(block);
+    }
+    block.innerHTML = `<h4>${labelForDrill(kind)}</h4><div class="muted">${t("drill_loading")}</div>`;
+    // Scroll the newly added/refreshed block into view
+    block.scrollIntoView({ behavior: "smooth", block: "start" });
+
     try {
       const text = await callApi({ mode: kind, context: lastReport });
-      out.innerHTML = `<h4>${labelForDrill(kind)}</h4>` + renderMarkdown(text);
+      block.innerHTML = `<h4>${labelForDrill(kind)}</h4>` + renderMarkdown(text);
     } catch (e) {
-      out.innerHTML = `<h4>${labelForDrill(kind)}</h4><div class="neg">${t("err_drill")}${escapeHTML(e.message)}</div>`;
+      block.innerHTML = `<h4>${labelForDrill(kind)}</h4><div class="neg">${t("err_drill")}${escapeHTML(e.message)}</div>`;
     }
   }
 
