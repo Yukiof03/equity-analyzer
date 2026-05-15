@@ -206,7 +206,14 @@ export default async function handler(req, res) {
     messages: [{ role: "user", content: user }],
   };
   if (useWebSearch) {
-    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+    // max_uses caps web_search calls. Each search round-trip re-injects the
+    // result page (~5–10K tokens) into the input context — capping this is
+    // the single biggest lever against the 30K/min input-token rate limit.
+    body.tools = [{
+      type: "web_search_20250305",
+      name: "web_search",
+      max_uses: mode === "analyze" ? 4 : 3,
+    }];
   }
 
   const controller = new AbortController();
@@ -229,7 +236,15 @@ export default async function handler(req, res) {
     const data = await upstream.json().catch(() => ({}));
 
     if (!upstream.ok) {
-      const msg = data?.error?.message || `Upstream API error ${upstream.status}`;
+      let msg = data?.error?.message || `Upstream API error ${upstream.status}`;
+      // The 30K input-tokens/minute limit is easy to hit when a heavy
+      // analyze call (web_search) is followed by a drilldown within ~60s.
+      // Surface a clearer hint so the user knows what to do.
+      if (upstream.status === 429) {
+        msg = lang === "en"
+          ? "Anthropic API rate limit reached (30K input tokens/minute). Please wait about 60 seconds and try again — web-search round-trips can quickly consume the per-minute budget."
+          : "Anthropic APIの入力トークンレートリミット（30K/分）に達しました。約60秒待ってから再試行してください。直前の分析でWeb検索が走った場合、その消費がまだ残っています。";
+      }
       return res.status(upstream.status >= 500 ? 502 : upstream.status).json({ error: msg });
     }
 
