@@ -791,26 +791,95 @@
     return String(s || "report").replace(/[\\/?%*:|"<>\s]+/g, "_").slice(0, 80);
   }
 
+  // Wait two animation frames so Chart.js has fully painted to its canvas.
+  function waitForPaint() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  }
+
+  // Replace every <canvas> in `cloneRoot` with an <img> built from the original
+  // canvas's toDataURL. html2canvas is unreliable with live Chart.js canvases
+  // (especially under scale > 1) — turning them into static images makes the
+  // capture deterministic.
+  function bakeCanvasesToImages(originalRoot, cloneRoot) {
+    const origCanvases = originalRoot.querySelectorAll("canvas");
+    const cloneCanvases = cloneRoot.querySelectorAll("canvas");
+    origCanvases.forEach((c, i) => {
+      const target = cloneCanvases[i];
+      if (!target || !target.parentNode) return;
+      let dataUrl = "";
+      try { dataUrl = c.toDataURL("image/png"); } catch (_) { return; }
+      const cssW = c.clientWidth || c.width;
+      const cssH = c.clientHeight || c.height;
+      const img = document.createElement("img");
+      img.src = dataUrl;
+      img.style.display = "block";
+      img.style.width = "100%";
+      img.style.height = (cssH && cssW) ? "auto" : "280px";
+      // Lock aspect ratio so html2canvas doesn't reflow it
+      if (cssW && cssH) {
+        img.style.aspectRatio = `${cssW} / ${cssH}`;
+      }
+      target.parentNode.replaceChild(img, target);
+    });
+  }
+
   async function exportPDF() {
     if (!lastReport) return;
     const btn = $("#export-pdf-btn");
     const origLabel = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = t("export_pdf_loading"); }
 
+    let workspace = null;
+
     try {
       await ensureHtml2Pdf();
 
-      // Hide non-printable controls inside the captured area
-      document.body.classList.add("exporting-pdf");
-      // Charts are HTMLCanvas — html2canvas needs them re-rendered with the
-      // light palette the export CSS forces. Re-draw before capture.
-      const wasDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-      if (wasDark) {
-        drawFinancialChart(lastReport);
-        drawSegmentChart(lastReport);
-      }
+      // Force the light palette on the live document so Chart.js redraws
+      // with print-safe colors. The class goes on <html> (not <body>) because
+      // getCSSVar reads from documentElement — putting it on body would leave
+      // ":root" CSS vars in dark mode, and Chart.js would draw with low-
+      // contrast colors on the forced-white background.
+      document.documentElement.classList.add("exporting-pdf");
+      drawFinancialChart(lastReport);
+      drawSegmentChart(lastReport);
+      await waitForPaint();
 
-      const target = document.getElementById("report-section");
+      const original = document.getElementById("report-section");
+
+      // Build an isolated, fixed-width container off-screen. Using a fresh
+      // wrapper avoids html2pdf inheriting offsets/padding from .wrap and
+      // from hidden siblings (#progress-section, #error-box) that have been
+      // confusing the page break calculator.
+      workspace = document.createElement("div");
+      workspace.id = "pdf-workspace";
+      workspace.style.cssText = [
+        "position:absolute",
+        "left:-99999px",
+        "top:0",
+        "width:760px",
+        "background:#ffffff",
+        "color:#14202e",
+        "padding:20px",
+        "margin:0",
+        "box-sizing:border-box",
+        "font-family:system-ui,-apple-system,'Segoe UI','Hiragino Kaku Gothic ProN','Hiragino Sans','Yu Gothic UI','Meiryo',sans-serif",
+      ].join(";");
+
+      const clone = original.cloneNode(true);
+      clone.style.display = "block";
+      clone.style.width = "100%";
+      clone.style.maxWidth = "100%";
+      clone.style.margin = "0";
+      clone.style.padding = "0";
+
+      // Convert live canvases to static PNG images inside the clone
+      bakeCanvasesToImages(original, clone);
+
+      workspace.appendChild(clone);
+      document.body.appendChild(workspace);
+
       const company = lastReport.company || "report";
       const date = (lastReport.generated || new Date().toISOString().slice(0, 10)).replace(/\//g, "-");
       const filename = `${safeFileName(company)}_${safeFileName(date)}.pdf`;
@@ -819,16 +888,27 @@
         margin: [10, 10, 12, 10],
         filename,
         image: { type: "jpeg", quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: 800,
+        },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait", compress: true },
-        pagebreak: { mode: ["css", "legacy"] },
+        pagebreak: { mode: ["avoid-all", "css"] },
       };
-      await window.html2pdf().set(opt).from(target).save();
+      await window.html2pdf().set(opt).from(workspace).save();
     } catch (e) {
       showError(t("err_export_pdf") + (e?.message || String(e)));
     } finally {
-      document.body.classList.remove("exporting-pdf");
-      // Restore charts to live theme
+      if (workspace && workspace.parentNode) {
+        workspace.parentNode.removeChild(workspace);
+      }
+      document.documentElement.classList.remove("exporting-pdf");
+      // Restore charts to the live theme
       if (lastReport) {
         drawFinancialChart(lastReport);
         drawSegmentChart(lastReport);
