@@ -136,6 +136,7 @@ export default function Home() {
           <div className="drill-output" id="drill-output" />
 
           <div className="reset-row">
+            <button className="export-btn" id="export-pdf-btn" type="button" data-i18n="export_pdf_btn">📄 PDFエクスポート</button>
             <button className="link-btn" id="reset-btn" type="button" data-i18n="reset_btn">↻ 別企業を分析</button>
           </div>
         </section>

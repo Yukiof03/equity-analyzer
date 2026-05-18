@@ -386,7 +386,48 @@ details.settings input {
 .drill-output.visible { display: block; }
 .drill-output h4 { margin: 0 0 8px; font-size: 13px; color: var(--primary); }
 
-.reset-row { margin-top: 28px; text-align: center; }
+.reset-row {
+  margin-top: 28px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.export-btn {
+  background: var(--primary);
+  color: #fff;
+  border: 1px solid var(--primary);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+}
+.export-btn:hover { filter: brightness(1.08); }
+.export-btn:disabled { opacity: 0.6; cursor: wait; }
+
+/* PDF export mode — force light theme so the captured canvas is print-friendly,
+   and hide controls that shouldn't appear in the document. */
+.exporting-pdf {
+  --bg: #ffffff;
+  --bg-soft: #f5f7fa;
+  --bg-card: #ffffff;
+  --border: #e2e6ec;
+  --text: #14202e;
+  --text-soft: #5a6573;
+  --text-muted: #8a929e;
+}
+.exporting-pdf .drill-row,
+.exporting-pdf .reset-row { display: none !important; }
+.exporting-pdf .chart-card,
+.exporting-pdf .div-card,
+.exporting-pdf .drill-block,
+.exporting-pdf .seg-table,
+.exporting-pdf .summary-card { page-break-inside: avoid; }
+.exporting-pdf h2 { page-break-after: avoid; }
 
 .pos { color: var(--positive); }
 .neg { color: var(--negative); }
