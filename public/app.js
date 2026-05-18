@@ -57,6 +57,9 @@
       drill_competitor: "競合比較",
       drill_scenario: "中期シナリオ",
       reset_btn: "↻ 別企業を分析",
+      export_pdf_btn: "📄 PDFエクスポート",
+      export_pdf_loading: "PDF生成中…",
+      err_export_pdf: "PDFエクスポート失敗：",
       footer_disclaimer: "本ツールの分析結果はClaudeのWeb検索能力に依存します。投資判断は必ず公式IR資料との照合を行ってください。",
       // KPI
       kpi_sotp: "SOTP加重平均成長率",
@@ -159,6 +162,9 @@
       drill_competitor: "Competitor comparison",
       drill_scenario: "Mid-term scenarios",
       reset_btn: "↻ Analyze another company",
+      export_pdf_btn: "📄 Export PDF",
+      export_pdf_loading: "Generating PDF…",
+      err_export_pdf: "PDF export failed: ",
       footer_disclaimer: "Results depend on Claude's web search capability. Always verify against official IR materials before making investment decisions.",
       kpi_sotp: "SOTP Weighted Avg Growth",
       kpi_3yr: "3-Yr Avg Revenue Growth",
@@ -761,6 +767,76 @@
     }
   }
 
+  /* ---------- PDF export ---------- */
+  // html2pdf.js (≈600KB) is loaded on first click only — keeps initial page light.
+  let html2pdfPromise = null;
+  function ensureHtml2Pdf() {
+    if (window.html2pdf) return Promise.resolve();
+    if (html2pdfPromise) return html2pdfPromise;
+    html2pdfPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => {
+        html2pdfPromise = null;
+        reject(new Error("html2pdf.js load error"));
+      };
+      document.head.appendChild(s);
+    });
+    return html2pdfPromise;
+  }
+
+  function safeFileName(s) {
+    return String(s || "report").replace(/[\\/?%*:|"<>\s]+/g, "_").slice(0, 80);
+  }
+
+  async function exportPDF() {
+    if (!lastReport) return;
+    const btn = $("#export-pdf-btn");
+    const origLabel = btn ? btn.textContent : "";
+    if (btn) { btn.disabled = true; btn.textContent = t("export_pdf_loading"); }
+
+    try {
+      await ensureHtml2Pdf();
+
+      // Hide non-printable controls inside the captured area
+      document.body.classList.add("exporting-pdf");
+      // Charts are HTMLCanvas — html2canvas needs them re-rendered with the
+      // light palette the export CSS forces. Re-draw before capture.
+      const wasDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (wasDark) {
+        drawFinancialChart(lastReport);
+        drawSegmentChart(lastReport);
+      }
+
+      const target = document.getElementById("report-section");
+      const company = lastReport.company || "report";
+      const date = (lastReport.generated || new Date().toISOString().slice(0, 10)).replace(/\//g, "-");
+      const filename = `${safeFileName(company)}_${safeFileName(date)}.pdf`;
+
+      const opt = {
+        margin: [10, 10, 12, 10],
+        filename,
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait", compress: true },
+        pagebreak: { mode: ["css", "legacy"] },
+      };
+      await window.html2pdf().set(opt).from(target).save();
+    } catch (e) {
+      showError(t("err_export_pdf") + (e?.message || String(e)));
+    } finally {
+      document.body.classList.remove("exporting-pdf");
+      // Restore charts to live theme
+      if (lastReport) {
+        drawFinancialChart(lastReport);
+        drawSegmentChart(lastReport);
+      }
+      if (btn) { btn.disabled = false; btn.textContent = origLabel || t("export_pdf_btn"); }
+    }
+  }
+
   /* ---------- Main run ---------- */
   async function runAnalysis() {
     if (isRunning) return;
@@ -947,6 +1023,8 @@
     });
     $("#reset-btn").addEventListener("click", resetAnalysis);
     $("#sample-btn").addEventListener("click", loadSample);
+    const pdfBtn = $("#export-pdf-btn");
+    if (pdfBtn) pdfBtn.addEventListener("click", exportPDF);
     $$(".drill-btn").forEach((b) => {
       b.addEventListener("click", () => runDrilldown(b.dataset.drill));
     });
